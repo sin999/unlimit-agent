@@ -2,9 +2,9 @@ package com.example.unlimitagent.agent;
 
 import com.example.unlimitagent.model.IncidentAnalysis;
 import com.example.unlimitagent.model.Severity;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,7 +20,7 @@ class ResponseParserTest {
 
     @Test
     void parsesValidJson() {
-        IncidentAnalysis result = parser.parse(validJson());
+        IncidentAnalysis result = parser.parseRaw(validJson());
         assertThat(result.category()).isEqualTo("External payment provider issue");
         assertThat(result.severity()).isEqualTo(Severity.HIGH);
         assertThat(result.hypotheses()).hasSize(1);
@@ -29,70 +29,64 @@ class ResponseParserTest {
     @Test
     void stripsMarkdownFences() {
         String fenced = "```json\n" + validJson() + "\n```";
-        IncidentAnalysis result = parser.parse(fenced);
+        IncidentAnalysis result = parser.parseRaw(fenced);
         assertThat(result.category()).isNotBlank();
     }
 
     @Test
     void throwsOnInvalidJson() {
-        assertThatThrownBy(() -> parser.parse("not json at all"))
+        assertThatThrownBy(() -> parser.parseRaw("not json at all"))
                 .isInstanceOf(ResponseParseException.class);
     }
 
     @Test
     void throwsOnMissingSeverity() {
-        String json = """
-                {
-                  "category": "External payment provider issue",
-                  "summary": "PayGate is not responding.",
-                  "hypotheses": [
-                    {
-                      "title": "PayGate degradation",
-                      "reasoning": "Timeouts only on PayGate",
-                      "next_steps": ["Check PayGate status", "Review error logs"]
-                    }
-                  ]
-                }
-                """;
-        assertThatThrownBy(() -> parser.parse(json))
+        String json = "{\n" +
+                "  \"category\": \"External payment provider issue\",\n" +
+                "  \"summary\": \"PayGate is not responding.\",\n" +
+                "  \"hypotheses\": [\n" +
+                "    {\n" +
+                "      \"title\": \"PayGate degradation\",\n" +
+                "      \"reasoning\": \"Timeouts only on PayGate\",\n" +
+                "      \"next_steps\": [\"Check PayGate status\", \"Review error logs\"]\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
+        assertThatThrownBy(() -> parser.parseRaw(json))
                 .isInstanceOf(ResponseParseException.class);
     }
 
     @Test
     void throwsOnEmptyHypotheses() {
-        String json = """
-                {
-                  "category": "External payment provider issue",
-                  "summary": "PayGate is not responding.",
-                  "severity": "high",
-                  "hypotheses": []
-                }
-                """;
-        assertThatThrownBy(() -> parser.parse(json))
+        String json = "{\n" +
+                "  \"category\": \"External payment provider issue\",\n" +
+                "  \"summary\": \"PayGate is not responding.\",\n" +
+                "  \"severity\": \"high\",\n" +
+                "  \"hypotheses\": []\n" +
+                "}";
+        assertThatThrownBy(() -> parser.parseRaw(json))
                 .isInstanceOf(ResponseParseException.class);
     }
 
     @Test
     void acceptsCaseInsensitiveSeverity() {
         String json = validJson().replace("\"severity\": \"high\"", "\"severity\": \"HIGH\"");
-        IncidentAnalysis result = parser.parse(json);
+        IncidentAnalysis result = parser.parseRaw(json);
         assertThat(result.severity()).isEqualTo(Severity.HIGH);
     }
 
     private String validJson() {
-        return """
-                {
-                  "category": "External payment provider issue",
-                  "summary": "PayGate is not responding, causing card payment failures.",
-                  "severity": "high",
-                  "hypotheses": [
-                    {
-                      "title": "PayGate degradation",
-                      "reasoning": "Timeouts only on PayGate",
-                      "next_steps": ["Check PayGate status", "Review error logs"]
-                    }
-                  ]
-                }
-                """;
+        return "{\n" +
+                "  \"category\": \"External payment provider issue\",\n" +
+                "  \"summary\": \"PayGate is not responding, causing card payment failures.\",\n" +
+                "  \"severity\": \"high\",\n" +
+                "  \"hypotheses\": [\n" +
+                "    {\n" +
+                "      \"title\": \"PayGate degradation\",\n" +
+                "      \"reasoning\": \"Timeouts only on PayGate\",\n" +
+                "      \"next_steps\": [\"Check PayGate status\", \"Review error logs\"]\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
     }
 }

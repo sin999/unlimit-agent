@@ -1,34 +1,62 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '4.0.6'
+    id 'org.springframework.boot' version '3.4.5'
     id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'com.example'
 version = '0.0.1-SNAPSHOT'
-description = 'unlimit-agent'
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(26)
     }
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 repositories {
     mavenCentral()
 }
 
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:1.0.0"
+    }
+}
+
 dependencies {
+    // Web
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Spring AI — swap the starter to change providers (openai, ollama, gemini, etc.)
+    implementation 'org.springframework.ai:spring-ai-starter-model-anthropic'
+
+    // JSON Schema validation for LLM output fallback
     implementation 'com.networknt:json-schema-validator:1.5.3'
+
+    // Boilerplate reduction
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
+
+    // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
+    testImplementation 'org.springframework.ai:spring-ai-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Override Mockito and ByteBuddy to versions that support Java 26
+    testImplementation 'org.mockito:mockito-core:5.20.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.20.0'
+    testImplementation 'net.bytebuddy:byte-buddy:1.17.8'
+    testImplementation 'net.bytebuddy:byte-buddy-agent:1.17.8'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    jvmArgs(
+        '-XX:+EnableDynamicAgentLoading',
+        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+        '--add-opens=java.base/java.util=ALL-UNNAMED'
+    )
 }

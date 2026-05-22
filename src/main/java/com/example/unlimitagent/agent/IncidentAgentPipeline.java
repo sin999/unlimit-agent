@@ -1,12 +1,15 @@
 package com.example.unlimitagent.agent;
 
-import com.example.unlimitagent.client.LlmClient;
+import com.example.unlimitagent.client.LlmApiException;
 import com.example.unlimitagent.knowledge.KnowledgeBase;
 import com.example.unlimitagent.model.AnalysisStage;
 import com.example.unlimitagent.model.IncidentAnalysis;
 import com.example.unlimitagent.model.IncidentRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.retry.NonTransientAiException;
+import org.springframework.ai.retry.TransientAiException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -15,7 +18,7 @@ public class IncidentAgentPipeline {
 
     private static final Logger log = LoggerFactory.getLogger(IncidentAgentPipeline.class);
 
-    private final LlmClient llmClient;
+    private final ChatClient chatClient;
     private final KnowledgeBase knowledgeBase;
     private final ResponseParser responseParser;
 
@@ -25,10 +28,10 @@ public class IncidentAgentPipeline {
     @Value("${agent.retry.backoff-delay-ms}")
     private long backoffDelayMs;
 
-    public IncidentAgentPipeline(LlmClient llmClient,
+    public IncidentAgentPipeline(ChatClient chatClient,
                                   KnowledgeBase knowledgeBase,
                                   ResponseParser responseParser) {
-        this.llmClient = llmClient;
+        this.chatClient = chatClient;
         this.knowledgeBase = knowledgeBase;
         this.responseParser = responseParser;
     }
@@ -42,9 +45,16 @@ public class IncidentAgentPipeline {
 
     private String runStage1(String description) {
         try {
-            String output = llmClient.complete(PromptTemplates.STAGE1_SYSTEM, description);
+            String output = chatClient.prompt()
+                    .system(PromptTemplates.STAGE1_SYSTEM)
+                    .user(description)
+                    .call()
+                    .content();
             log.debug("Stage PARSE_INPUT completed: {}", output);
             return output;
+        } catch (NonTransientAiException | TransientAiException e) {
+            throw new AgentPipelineException(AnalysisStage.PARSE_INPUT, e.getMessage(),
+                    new LlmApiException(0, e.getMessage()));
         } catch (Exception e) {
             throw new AgentPipelineException(AnalysisStage.PARSE_INPUT, e.getMessage(), e);
         }
@@ -56,9 +66,17 @@ public class IncidentAgentPipeline {
                     .replace("<stage1_output>", stage1Output)
                     .replace("<system_description>", knowledgeBase.getSystemDescription())
                     .replace("<past_incidents>", knowledgeBase.getPastIncidents());
-            String output = llmClient.complete(PromptTemplates.STAGE2_SYSTEM, userMessage);
+
+            String output = chatClient.prompt()
+                    .system(PromptTemplates.STAGE2_SYSTEM)
+                    .user(userMessage)
+                    .call()
+                    .content();
             log.debug("Stage ENRICH_WITH_CONTEXT completed: {}", output);
             return output;
+        } catch (NonTransientAiException | TransientAiException e) {
+            throw new AgentPipelineException(AnalysisStage.ENRICH_WITH_CONTEXT,
+                    e.getMessage(), new LlmApiException(0, e.getMessage()));
         } catch (Exception e) {
             throw new AgentPipelineException(AnalysisStage.ENRICH_WITH_CONTEXT, e.getMessage(), e);
         }
@@ -70,35 +88,61 @@ public class IncidentAgentPipeline {
                 .replace("<stage2_output>", stage2Output);
     }
 
-    private IncidentAnalysis runStage3WithRetry(String stage3UserMessage) {
-        String stage3Output;
-        try {
-            stage3Output = llmClient.complete(PromptTemplates.STAGE3_SYSTEM, stage3UserMessage);
-            log.debug("Stage GENERATE_RESPONSE completed: {}", stage3Output);
-        } catch (Exception e) {
-            throw new AgentPipelineException(AnalysisStage.GENERATE_RESPONSE, e.getMessage(), e);
-        }
-
-        String currentUserMessage = stage3UserMessage;
+    private IncidentAnalysis runStage3WithRetry(String initialStage3UserMessage) {
+        String stage3UserMessage = initialStage3UserMessage;
         int attempt = 1;
+
         while (true) {
             try {
-                return responseParser.parse(stage3Output);
+                if (attempt == 1) {
+                    // First attempt: use entity() for structured output via BeanOutputConverter
+                    IncidentAnalysis result = chatClient.prompt()
+                            .system(PromptTemplates.STAGE3_SYSTEM)
+                            .user(stage3UserMessage)
+                            .call()
+                            .entity(IncidentAnalysis.class);
+                    responseParser.validateAnalysis(result);
+                    log.debug("Stage GENERATE_RESPONSE completed on attempt {}", attempt);
+                    return result;
+                } else {
+                    // Subsequent attempts: fall back to raw content + manual parse
+                    String rawOutput = chatClient.prompt()
+                            .system(PromptTemplates.STAGE3_SYSTEM)
+                            .user(stage3UserMessage)
+                            .call()
+                            .content();
+                    IncidentAnalysis result = responseParser.parseRaw(rawOutput);
+                    log.debug("Stage GENERATE_RESPONSE completed on attempt {}", attempt);
+                    return result;
+                }
             } catch (ResponseParseException e) {
                 if (attempt >= maxAttempts) {
                     throw new AgentPipelineException(AnalysisStage.GENERATE_RESPONSE, e.getMessage(), e);
                 }
-                String refinedUserMessage = currentUserMessage
-                        + PromptTemplates.RETRY_SUFFIX_TEMPLATE.replace("<validation_errors>", e.getMessage());
-                try {
-                    stage3Output = llmClient.complete(PromptTemplates.STAGE3_SYSTEM, refinedUserMessage);
-                } catch (Exception retryEx) {
-                    throw new AgentPipelineException(AnalysisStage.GENERATE_RESPONSE, retryEx.getMessage(), retryEx);
-                }
-                attempt++;
+                log.warn("Stage GENERATE_RESPONSE failed (attempt {}), retrying: {}", attempt, e.getMessage());
                 sleep();
-                log.warn("Stage GENERATE_RESPONSE parse failed (attempt {}), retrying: {}", attempt - 1, e.getMessage());
-                currentUserMessage = refinedUserMessage;
+                stage3UserMessage = stage3UserMessage
+                        + PromptTemplates.RETRY_SUFFIX_TEMPLATE
+                                .replace("<validation_errors>", e.getMessage());
+                attempt++;
+            } catch (RuntimeException e) {
+                // Covers entity() parse failures (RuntimeException wrapping JsonProcessingException)
+                // and Spring AI provider exceptions
+                if (e instanceof NonTransientAiException || e instanceof TransientAiException) {
+                    throw new AgentPipelineException(AnalysisStage.GENERATE_RESPONSE,
+                            e.getMessage(), new LlmApiException(0, e.getMessage()));
+                }
+                // Treat as parse failure and retry
+                String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                if (attempt >= maxAttempts) {
+                    throw new AgentPipelineException(AnalysisStage.GENERATE_RESPONSE, errorMsg, e);
+                }
+                log.warn("Stage GENERATE_RESPONSE entity parse failed (attempt {}), retrying: {}", attempt, errorMsg);
+                sleep();
+                stage3UserMessage = stage3UserMessage
+                        + PromptTemplates.RETRY_SUFFIX_TEMPLATE
+                                .replace("<validation_errors>", errorMsg);
+                attempt++;
             }
         }
     }

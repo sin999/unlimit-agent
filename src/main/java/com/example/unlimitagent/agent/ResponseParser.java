@@ -2,6 +2,8 @@ package com.example.unlimitagent.agent;
 
 import com.example.unlimitagent.model.Hypothesis;
 import com.example.unlimitagent.model.IncidentAnalysis;
+import com.fasterxml.jackson.core.JacksonException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.networknt.schema.InputFormat;
 import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.OutputFormat;
@@ -9,8 +11,6 @@ import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -31,25 +31,11 @@ public class ResponseParser {
         this.objectMapper = objectMapper;
     }
 
-    public IncidentAnalysis parse(String rawLlmOutput) {
-        String cleaned = stripFences(rawLlmOutput);
-        try {
-            IncidentAnalysis analysis = objectMapper.readValue(cleaned, IncidentAnalysis.class);
-            validateAnalysis(analysis, cleaned);
-            return analysis;
-        } catch (ResponseParseException e) {
-            throw e;
-        } catch (JacksonException e) {
-            validateWithSchema(cleaned, rawLlmOutput);
-            throw new ResponseParseException("JSON parse failed: " + e.getMessage(), rawLlmOutput, e);
-        }
-    }
-
-    private String stripFences(String raw) {
-        return FENCE_PATTERN.matcher(raw.strip()).replaceAll("").strip();
-    }
-
-    private void validateAnalysis(IncidentAnalysis analysis, String raw) {
+    /**
+     * Called after entity() succeeds — validates the already-parsed object.
+     * Throws ResponseParseException if any validation rule is violated.
+     */
+    public void validateAnalysis(IncidentAnalysis analysis) {
         List<String> errors = new ArrayList<>();
 
         if (analysis.severity() == null) {
@@ -75,8 +61,35 @@ public class ResponseParser {
         }
 
         if (!errors.isEmpty()) {
-            throw new ResponseParseException("Validation failed: " + String.join("; ", errors), raw);
+            throw new ResponseParseException("Validation failed: " + String.join("; ", errors), null);
         }
+    }
+
+    /**
+     * Fallback called on retry when entity() fails — parses raw string.
+     * Strips markdown fences, Jackson-parses, then calls validateAnalysis.
+     */
+    public IncidentAnalysis parseRaw(String rawLlmOutput) {
+        String cleaned = stripFences(rawLlmOutput);
+        try {
+            IncidentAnalysis analysis = objectMapper.readValue(cleaned, IncidentAnalysis.class);
+            validateAnalysis(analysis);
+            return analysis;
+        } catch (ResponseParseException e) {
+            throw e;
+        } catch (JacksonException e) {
+            validateWithSchema(cleaned, rawLlmOutput);
+            throw new ResponseParseException("JSON parse failed: " + e.getMessage(), rawLlmOutput, e);
+        } catch (Exception e) {
+            throw new ResponseParseException("JSON parse failed: " + e.getMessage(), rawLlmOutput, e);
+        }
+    }
+
+    private String stripFences(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return FENCE_PATTERN.matcher(raw.strip()).replaceAll("").strip();
     }
 
     private void validateWithSchema(String json, String rawLlmOutput) {
