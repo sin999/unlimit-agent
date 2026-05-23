@@ -39,3 +39,7 @@ out/
 ### Claude Code ###
 .claude/settings.local.json
 models/
+
+### UI ###
+ui/node_modules/
+ui/dist/
