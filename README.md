@@ -22,8 +22,9 @@ Three-stage LLM pipeline backed by a vector knowledge base of past incidents:
 | Embeddings | llama.cpp server · `nomic-embed-text-v1.5` GGUF (OpenAI-compatible API) |
 | JSON validation | `com.networknt:json-schema-validator:1.5.3` |
 | API docs | springdoc-openapi 2.8.8 (Swagger UI) |
+| Web UI | React 18 + Vite + TypeScript + Tailwind CSS (served by nginx) |
 | Java | 21 |
-| Build | Gradle (Groovy DSL) |
+| Build | Gradle (Groovy DSL) / npm |
 
 ## Prerequisites
 
@@ -40,9 +41,17 @@ LLM_API_KEY=sk-ant-... docker compose up --build
 
 On first run the embedding model (`nomic-embed-text-v1.5`, ~139 MB) is downloaded automatically into a Docker volume by the `llama-cpp-init` container. Subsequent starts skip the download and are ready in under 30 seconds.
 
+### Open the UI
+
+Once the stack is healthy, open the incident triage UI:
+
+**➜ http://localhost:3000**
+
+Paste an incident description, click **Analyze incident**, and the UI returns the category, severity, and ranked hypotheses with next steps.
+
 ### Explore the API
 
-Once the stack is healthy, open the interactive API explorer:
+The full REST API is available via Swagger UI:
 
 **➜ http://localhost:8080/swagger-ui.html**
 
@@ -113,10 +122,11 @@ Returns `201 Created`.
 GET /actuator/health
 ```
 
-## API Documentation
+## Endpoints
 
 | URL | Description |
 |---|---|
+| http://localhost:3000 | Incident triage UI |
 | http://localhost:8080/swagger-ui.html | Interactive Swagger UI |
 | http://localhost:8080/v3/api-docs | OpenAPI JSON spec |
 

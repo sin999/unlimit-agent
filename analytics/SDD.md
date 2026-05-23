@@ -1,7 +1,7 @@
 # Software Design Document
 ## AI Incident Assistant
 
-**Version:** 1.8
+**Version:** 1.9
 **Date:** 2026-05-23
 **References:** BRD.md, SRS.md
 
@@ -36,6 +36,10 @@
 | Access control | Spring Security 6 + `spring-boot-starter-oauth2-resource-server` | Stateless JWT Bearer token validation; role-based endpoint authorization; toggled by the `security.enabled` property. |
 | Observability | Spring Boot Actuator | Provides `/actuator/health` for liveness/readiness probes. |
 | API documentation | springdoc-openapi 2.8.8 (`springdoc-openapi-starter-webmvc-ui`) | Auto-generates OpenAPI 3.0 spec and Swagger UI from controller annotations at runtime. UI at `/swagger-ui.html`; JSON spec at `/v3/api-docs`. |
+| Web UI framework | React 18 + TypeScript + Vite 6 | Single-page application. Build toolchain produces a static bundle. |
+| UI styling | Tailwind CSS 3.x (PostCSS) | Utility-first CSS; no runtime stylesheet — all classes inlined at build time. |
+| UI runtime server | nginx (alpine) | Serves static files and reverse-proxies `/api/` to the `app` container. No CORS headers needed. |
+| UI build | `node:20-alpine` Docker build stage + `npm ci` | Multi-stage Dockerfile — build stage compiles the bundle, nginx stage serves it. |
 
 ### 2.1 Switching LLM Providers
 
@@ -347,7 +351,31 @@ controllers/
   GlobalExceptionHandler     Maps all domain exceptions to HTTP responses
 ```
 
-Note: `IncidentRequest`, `IncidentAnalysis`, `Hypothesis`, `Severity`, `KnowledgeIngestRequest`, and `ErrorResponse` live in the `:api` module (`model` package) — not in `impl`. The `impl` module references them as a project dependency.
+Note: `IncidentRequest`, `IncidentAnalysis`, `Hypothesis`, `Severity`, `KnowledgeIngestRequest`, and `ErrorResponse` live in the `:api` module (`model` package) — not in `impl`.
+
+### ui module
+
+A standalone directory — not a Gradle submodule. It has its own `package.json` and build lifecycle separate from the backend.
+
+```
+ui/
+  Dockerfile                  Multi-stage: node:20-alpine build → nginx:alpine serve
+  nginx.conf                  Serves static files; reverse-proxies /api/ to app:8080
+  package.json                npm project (type: module)
+  vite.config.ts              Vite build config; dev proxy /api/ → http://localhost:8080
+  tailwind.config.js          Tailwind content paths
+  postcss.config.js           PostCSS plugin chain (Tailwind + autoprefixer)
+  index.html                  SPA entry point
+  src/
+    main.tsx                  React root; mounts App into #root
+    index.css                 Tailwind directives (@base, @components, @utilities)
+    types.ts                  TypeScript types: IncidentAnalysis, Hypothesis, Severity
+    api/
+      client.ts               analyzeIncident(description) — POST /api/v1/incidents/analyze
+    components/
+      AnalysisResult.tsx      Renders category, severity badge, summary, hypotheses list
+    App.tsx                   Root component: textarea form, loading/error state, AnalysisResult
+``` The `impl` module references them as a project dependency.
 
 Prompt template files are stored under `src/main/resources/prompts/` — one `.txt` file per prompt, named after the constant in lower-snake-case. All six files are **Thymeleaf TEXT mode templates**. System prompt files (no substitution needed) contain plain text and are valid Thymeleaf templates with no expressions. User message templates use the unescaped inline expression syntax `[(${variableName})]` for each variable placeholder:
 
@@ -619,6 +647,33 @@ A `@RestControllerAdvice` with one handler method per exception type. Logging le
 Only the catch-all `Exception` handler logs at ERROR. All 4xx and expected 5xx failures log at WARN — these represent operational conditions (LLM misbehaviour, bad client input) rather than programming errors.
 
 **Spring Security exceptions (401/403) are not handled here.** `AuthenticationException` and `AccessDeniedException` are intercepted by Spring Security before the request reaches the `DispatcherServlet`, so `@RestControllerAdvice` never sees them. They are handled by the custom `AuthenticationEntryPoint` (→ 401) and `AccessDeniedHandler` (→ 403) wired inside `SecurityConfig` (§6.3), which write the standard `ErrorResponse` JSON directly to `HttpServletResponse`.
+
+---
+
+### 6.14 UI — React SPA
+
+The `ui/` directory is a self-contained frontend module. It is not part of the Gradle build; it has its own `package.json`, `Dockerfile`, and build lifecycle.
+
+**`types.ts`** — TypeScript interfaces that mirror the backend API contract:
+- `Hypothesis` — `title`, `reasoning`, `next_steps: string[]`
+- `Severity` — `'low' | 'medium' | 'high'`
+- `IncidentAnalysis` — `category`, `summary`, `severity`, `hypotheses: Hypothesis[]`
+
+**`api/client.ts`** — exports a single async function `analyzeIncident(description: string): Promise<IncidentAnalysis>`. It POSTs to `/api/v1/incidents/analyze` with `Content-Type: application/json`. On a non-2xx response it reads the error body and throws an `Error` with the `error` field value. The path is relative — it hits the nginx reverse proxy, which forwards it to the backend container.
+
+**`App.tsx`** — root component managing four state fields: `description`, `analysis`, `loading`, `error`. On form submit it calls `analyzeIncident`, sets `loading=true` for the duration, stores the result in `analysis`, and clears it on the next submission. The textarea enforces `maxLength={2000}` and displays a live character counter. The submit button is disabled while loading or when the description is blank.
+
+**`AnalysisResult.tsx`** — renders an `IncidentAnalysis`. Severity is displayed as a colour-coded badge (`bg-red-100` for high, `bg-amber-100` for medium, `bg-green-100` for low). Hypotheses are rendered as a numbered list; each hypothesis shows title, reasoning, and next steps as bullet points.
+
+**`nginx.conf`** — two location blocks:
+- `location /api/` — reverse-proxies to `http://app:8080/api/` with `proxy_read_timeout 60s` (matches the LLM pipeline's worst-case latency)
+- `location /` — serves static files from `/usr/share/nginx/html` with `try_files $uri $uri/ /index.html` for client-side routing
+
+**`Dockerfile`** — two-stage build:
+1. `node:20-alpine AS build` — copies `package*.json`, runs `npm ci`, copies source, runs `npm run build` (tsc + vite)
+2. `nginx:alpine` — copies `dist/` from the build stage and `nginx.conf` into `/etc/nginx/conf.d/default.conf`
+
+The `ui` service in `docker-compose.yml` depends on `app: service_healthy` so nginx only starts (and its proxy target is valid) after the backend is ready.
 
 ---
 
@@ -946,8 +1001,23 @@ services:
       retries: 5
       start_period: 60s
 
+  ui:
+    build: ./ui
+    ports:
+      - "3000:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 volumes:
   chroma-data:
+  llama-cpp-models:
 ```
 
 Key notes:
@@ -998,11 +1068,13 @@ Expected startup sequence and approximate times (first run):
 | Step | Service | Time |
 |---|---|---|
 | Build app image (Gradle + Docker layers) | `app` (build stage) | ~2 min (cached on subsequent runs) |
+| Build UI image (npm ci + vite build) | `ui` (build stage) | ~30 s (cached on subsequent runs) |
 | ChromaDB healthy | `chroma` | ~5 s |
 | ChromaDB tenant + database created | `chroma-init` | ~2 s |
 | Embedding model downloaded to volume | `llama-cpp-init` | ~2 min first run; instant on repeat |
 | llama.cpp model loaded, `/health` responds | `llama-cpp` | ~5 s |
 | Spring Boot context + seeding | `app` | ~10 s |
+| nginx UI server ready | `ui` | ~2 s (starts after app is healthy) |
 
 All subsequent `docker compose up` calls skip the build cache and model download — total time is under 30 seconds.
 
@@ -1027,6 +1099,7 @@ unlimit-agent-chroma-init-1      alpine/curl:8.11.1                        Exite
 unlimit-agent-llama-cpp-init-1   alpine/curl:8.11.1                        Exited (0)
 unlimit-agent-llama-cpp-1        ghcr.io/ggml-org/llama.cpp:server-b9294   Up (healthy)
 unlimit-agent-app-1              unlimit-agent-app                         Up (healthy)
+unlimit-agent-ui-1               unlimit-agent-ui                          Up (healthy)
 ```
 
 Verify the app health endpoint:
@@ -1042,6 +1115,8 @@ Verify the embedding service:
 curl -s http://localhost:11434/health
 # Expected: {"status":"ok"}
 ```
+
+Open the incident triage UI: [http://localhost:3000](http://localhost:3000)
 
 Open the Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 

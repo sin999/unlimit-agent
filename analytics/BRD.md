@@ -1,7 +1,7 @@
 # Business Requirements Document
 ## AI Incident Assistant
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Date:** 2026-05-23  
 **Status:** Approved
 
@@ -103,6 +103,7 @@ An AI assistant that retrieves semantically similar past incidents and generates
 | BR-14 | The LLM provider MUST be configurable via environment variables — no credentials hardcoded |
 | BR-15 | The system MUST be deployable as a standalone HTTP service |
 | BR-16 | The system MUST be operable by a single engineer with minimal infrastructure (one `docker compose up` command) |
+| BR-20 | The system MUST provide a browser-based UI that allows engineers to submit an incident description and view the structured analysis result without using the REST API directly |
 
 ---
 
@@ -136,7 +137,7 @@ An AI assistant that retrieves semantically similar past incidents and generates
 - Automatic incident creation in ticketing systems (PagerDuty, Jira, etc.)
 - Real-time log ingestion or metrics correlation
 - Multi-turn conversational interaction (follow-up questions)
-- Web UI — HTTP API only
+- Advanced UI features: multi-turn conversation, history, saved analyses
 - Automatic post-incident resolution capture
 
 ---

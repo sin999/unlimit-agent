@@ -1,7 +1,7 @@
 # Software Requirements Specification
 ## AI Incident Assistant
 
-**Version:** 1.3  
+**Version:** 1.4  
 **Date:** 2026-05-23  
 **Status:** Approved  
 **References:** BRD.md
@@ -16,7 +16,7 @@ This document specifies the functional and non-functional requirements for the A
 
 ### 1.2 Scope
 
-The AI Incident Assistant is a stateless HTTP service with a primary analysis endpoint and a secondary knowledge ingestion endpoint. It accepts a free-text incident description, runs it through a three-stage LLM pipeline enriched by a semantic knowledge base of past incidents, and returns a structured triage analysis. It also exposes a runtime endpoint for adding new incidents to the knowledge base without redeployment.
+The AI Incident Assistant consists of a stateless HTTP service and a browser-based single-page application (SPA). The HTTP service accepts a free-text incident description, runs it through a three-stage LLM pipeline enriched by a semantic knowledge base of past incidents, and returns a structured triage analysis. It also exposes a runtime endpoint for adding new incidents to the knowledge base without redeployment. The SPA provides a graphical interface for engineers to submit incidents and view analysis results without interacting with the REST API directly.
 
 ### 1.3 Definitions
 
@@ -33,27 +33,33 @@ The AI Incident Assistant is a stateless HTTP service with a primary analysis en
 
 ## 2. System Overview
 
-The system consists of two HTTP endpoints, an internal three-stage pipeline, and a knowledge layer:
+The system consists of a browser-based SPA, a Spring Boot HTTP service with two endpoints, an internal three-stage pipeline, and a knowledge layer:
 
 ```
-Client
-  │  POST /api/v1/incidents/analyze           {"description": "..."}
-  │  POST /api/v1/admin/incidents/knowledge   {"incidentId": "...", "text": "..."}
-  │  GET  /actuator/health
+[ Browser ]
+  │  GET  http://localhost:3000/
   ▼
-[ Web Layer ]
+[ UI — nginx ]                                React SPA (static files + /api/ reverse proxy)
+  │  POST /api/v1/incidents/analyze  ──────►
+  │                                          POST /api/v1/incidents/analyze           {"description": "..."}
+  │                                          POST /api/v1/admin/incidents/knowledge   {"incidentId": "...", "text": "..."}
+  │                                          GET  /actuator/health
+  │                                          ▼
+  │                                        [ Web Layer ]
+  │                                          │
+  │                                          ▼
+  │                                        [ Agent Pipeline ]                  (analysis endpoint only)
+  │                                          Stage 1 EXTRACT_FACTS:   extract structured facts
+  │                                          Stage 2 ENRICH_CONTEXT:  retrieve similar past incidents + architecture
+  │                                          Stage 3 SYNTHESIZE:      generate final IncidentAnalysis
+  │                                                                    (with retry on parse/validation failure)
+  │                                          │
+  │                                          ├── [ LLM API ]        (external; called in each stage)
+  │                                          └── [ Knowledge Layer ]
+  │                                                ├── system_description.txt  (static; loaded at startup)
+  │                                                └── Vector Store            (past incidents; seeded at startup)
   │
-  ▼
-[ Agent Pipeline ]                            (analysis endpoint only)
-  Stage 1 EXTRACT_FACTS:   extract structured facts from the raw description
-  Stage 2 ENRICH_CONTEXT:  retrieve similar past incidents and enrich with architecture knowledge
-  Stage 3 SYNTHESIZE:      generate the final structured IncidentAnalysis
-                           (with retry on parse/validation failure)
-  │
-  ├── [ LLM API ]        (external; called in each stage)
-  └── [ Knowledge Layer ]
-        ├── system_description.txt  (static; loaded at startup)
-        └── Vector Store            (past incidents; seeded at startup; updatable at runtime)
+  ◄──────────────────────── IncidentAnalysis JSON ─────────────────────────────
 ```
 
 ---
@@ -180,6 +186,18 @@ All validation errors MUST be collected and reported together in a single error 
 | FR-9.7 | Roles MUST be extracted from the `roles` claim (array of strings) in the JWT. The claim name MUST be configurable. |
 | FR-9.8 | JWT signature verification MUST use a JWKS endpoint or issuer URI supplied via environment variables. No signing keys MUST be hardcoded in source or configuration files. |
 | FR-9.9 | When security is disabled, all endpoints are accessible without authentication (existing behaviour is preserved). |
+
+### FR-10 — Browser UI
+
+| ID | Requirement |
+|---|---|
+| FR-10.1 | The system MUST provide a browser-based single-page application accessible at port 3000 |
+| FR-10.2 | The UI MUST present a text input field for the incident description with a character counter (max 2,000 characters) |
+| FR-10.3 | The UI MUST display the analysis result — category, severity (colour-coded), summary, and ranked hypotheses with next steps — without a page reload |
+| FR-10.4 | The UI MUST show a loading indicator while the analysis request is in progress |
+| FR-10.5 | The UI MUST display a human-readable error message if the API returns a non-2xx response |
+| FR-10.6 | The UI MUST proxy `/api/` requests to the backend service so no CORS configuration is required |
+| FR-10.7 | The UI MUST be served as static files from an nginx container with no server-side rendering |
 
 ### FR-8 — Health Check
 
