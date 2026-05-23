@@ -4,15 +4,13 @@ plugins {
     id 'io.spring.dependency-management' version '1.1.7'
 }
 
-group = 'com.example'
-version = '0.0.1-SNAPSHOT'
+group = 'pt.sin.services'
+version = '0.0.2'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(26)
+        languageVersion = JavaLanguageVersion.of(21)
     }
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
 }
 
 repositories {
@@ -26,26 +24,20 @@ dependencyManagement {
 }
 
 dependencies {
-    // Web
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-
-    // Spring AI — swap the starter to change providers (openai, ollama, gemini, etc.)
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.ai:spring-ai-starter-model-anthropic'
-
-    // JSON Schema validation for LLM output fallback
+    implementation 'org.springframework.ai:spring-ai-starter-vector-store-chroma'
+    implementation 'org.springframework.ai:spring-ai-starter-model-transformers'
     implementation 'com.networknt:json-schema-validator:1.5.3'
+    implementation 'org.apache.commons:commons-lang3:3.17.0'
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.8'
 
-    // Boilerplate reduction
-    compileOnly 'org.projectlombok:lombok'
-    annotationProcessor 'org.projectlombok:lombok'
-
-    // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.ai:spring-ai-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-
-    // Override Mockito and ByteBuddy to versions that support Java 26
     testImplementation 'org.mockito:mockito-core:5.20.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.20.0'
     testImplementation 'net.bytebuddy:byte-buddy:1.17.8'

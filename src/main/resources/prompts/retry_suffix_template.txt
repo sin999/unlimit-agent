@@ -1,0 +1,5 @@
+
+Your previous response failed validation with these errors:
+[(${validationErrors})]
+
+Please return ONLY valid JSON matching the required schema. No markdown, no explanation.

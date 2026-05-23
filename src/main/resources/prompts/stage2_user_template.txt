@@ -1,0 +1,8 @@
+Extracted facts:
+[(${stage1Output})]
+
+System architecture:
+[(${systemDescription})]
+
+Past incidents:
+[(${pastIncidents})]

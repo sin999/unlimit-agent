@@ -1,0 +1,15 @@
+The payment platform is composed of six services that communicate over internal HTTP.
+
+The api-gateway service receives all external HTTP requests from clients and routes them to the appropriate internal services. It is the single entry point for all client traffic.
+
+The auth-service handles authentication and issues JWT tokens. It is responsible for verifying credentials and signing tokens used by other services to authorise requests.
+
+The payment-service is responsible for creating and processing payment transactions. It calls external payment providers such as PayGate to execute card payments. This service has its own dedicated PostgreSQL database instance. External provider errors — including timeouts, HTTP 5xx responses, and invalid credential errors — are common and must be handled gracefully.
+
+The billing-service manages customer balances and invoicing. It maintains its own separate PostgreSQL database instance and is not directly involved in payment provider calls.
+
+The notification-service sends e-mail and SMS notifications to customers. It depends on external SMTP and SMS provider APIs. When those external providers experience degradation, notification delivery fails while the rest of the platform continues to function normally.
+
+The reporting-service generates analytical reports and exports. It runs long-running queries directly against the payment-service PostgreSQL instance. These queries can cause significant CPU and I/O load on the database, resulting in degraded performance for the payment-service during report generation.
+
+All six services write structured logs to a centralised ELK stack (Elasticsearch, Logstash, Kibana), which is the primary source of truth for log-based diagnostics.

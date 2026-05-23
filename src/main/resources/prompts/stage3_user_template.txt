@@ -1,0 +1,7 @@
+Extracted facts:
+[(${stage1Output})]
+
+Enriched context:
+[(${stage2Output})]
+
+Generate the final incident analysis JSON now.

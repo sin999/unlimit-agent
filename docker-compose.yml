@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  chroma:
+    image: chromadb/chroma:0.5.23
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      ANONYMIZED_TELEMETRY: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chroma-init:
+    image: alpine/curl:8.11.1
+    entrypoint: ["/bin/sh", "/chroma-init.sh"]
+    volumes:
+      - ./scripts/chroma-init.sh:/chroma-init.sh:ro
+    depends_on:
+      chroma:
+        condition: service_healthy
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-6}
+      SPRING_AI_VECTORSTORE_CHROMA_CLIENT_HOST: http://chroma
+      SPRING_AI_VECTORSTORE_CHROMA_CLIENT_PORT: 8000
+    depends_on:
+      chroma:
+        condition: service_healthy
+      chroma-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  chroma-data:

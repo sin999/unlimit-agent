@@ -1,0 +1,19 @@
+[INC-101] External payment provider timeout causing card payment failures
+Symptoms: Customers unable to pay by card. Transactions failing in bulk.
+Root cause: Massive timeouts observed in payment-service logs when calling the PayGate provider. Started around 12:05 UTC. No anomalies in any other service.
+Category: External payment provider issue
+
+[INC-102] Reporting-service DB load causing payment latency and gateway timeouts
+Symptoms: Sharp increase in response time for /payments/create (5-7 seconds). Some customers receiving 504 Gateway Timeout from api-gateway.
+Root cause: DB dashboards showed high CPU and many long-running queries originating from reporting-service, overloading the shared payment-service PostgreSQL instance.
+Category: DB degradation caused by reporting
+
+[INC-103] SMTP provider failure causing missing top-up confirmation e-mails
+Symptoms: Users not receiving top-up confirmation e-mails. Money credited correctly, balances accurate.
+Root cause: Intermittent connection errors to the SMTP provider in notification-service logs. Payment processing unaffected.
+Category: Notification delivery issue
+
+[INC-104] Invalid token signatures causing mobile login failures
+Symptoms: Some customers unable to log in via mobile app. auth-service returning 401 errors.
+Root cause: Logs show messages about invalid token signatures. No large-scale failures in other services. Isolated to auth-service.
+Category: User authentication errors
