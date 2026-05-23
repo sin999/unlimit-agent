@@ -1,8 +1,8 @@
 # Business Requirements Document
 ## AI Incident Assistant
 
-**Version:** 1.1  
-**Date:** 2026-05-22  
+**Version:** 1.2  
+**Date:** 2026-05-23  
 **Status:** Approved
 
 ---
@@ -80,6 +80,14 @@ An AI assistant that retrieves semantically similar past incidents and generates
 | BR-9 | The system MUST expose a runtime API endpoint for adding new incidents to the vector knowledge base without code changes or container redeployment. The `past_incidents.txt` file serves as the initial seed corpus only; ongoing knowledge base growth is handled through this API. |
 | BR-10 | Past incident entries MUST record at minimum: symptoms, root cause, and category |
 
+### 5.5 Access Control Requirements
+
+| ID | Requirement |
+|---|---|
+| BR-17 | When security enforcement is enabled, `POST /api/v1/incidents/analyze` MUST require an authenticated caller with the `user` or `admin` role. |
+| BR-18 | When security enforcement is enabled, `POST /api/v1/admin/incidents/knowledge` MUST require an authenticated caller with the `admin` role. |
+| BR-19 | The security enforcement mechanism MUST be switchable via a single environment variable (`SECURITY_ENABLED`) so the service can operate without an identity provider in development and CI environments. |
+
 ### 5.3 Reliability Requirements
 
 | ID | Requirement |
@@ -118,7 +126,7 @@ An AI assistant that retrieves semantically similar past incidents and generates
 - An Anthropic (or equivalent) API key is available and managed by the platform team.
 - ChromaDB is hosted as a sidecar container alongside the service.
 - The initial knowledge base corpus (4 historical incidents) is sufficient to demonstrate matching; the corpus will grow over time via the admin ingestion API.
-- The system is an internal tool — authentication and authorisation of API callers is out of scope for v1.
+- Security enforcement is off by default (`SECURITY_ENABLED=false`). In environments without an identity provider (local dev, CI) no credentials are required. Production deployments MUST set `SECURITY_ENABLED=true` with a configured JWKS or issuer URI.
 - Incident descriptions submitted by engineers MUST NOT contain customer PII (names, card numbers, email addresses) or confidential compliance data. Data submitted to the LLM API is governed by the API provider's data processing agreement. The platform team is responsible for communicating this constraint to all users.
 
 ---
@@ -129,7 +137,6 @@ An AI assistant that retrieves semantically similar past incidents and generates
 - Real-time log ingestion or metrics correlation
 - Multi-turn conversational interaction (follow-up questions)
 - Web UI — HTTP API only
-- User authentication on the API (including the admin knowledge ingestion endpoint)
 - Automatic post-incident resolution capture
 
 ---
@@ -144,3 +151,4 @@ An AI assistant that retrieves semantically similar past incidents and generates
 | R-4 | LLM API rate limiting under concurrent usage | Medium | Medium — requests rejected (HTTP 429) during high-incident periods | Monitor API quota usage; document rate limit thresholds from the provider; configure per-request timeouts |
 | R-5 | Sensitive data in incident descriptions sent to external LLM | Medium | High — potential compliance or data-protection violation | Engineer awareness training; evaluate self-hosted LLM (e.g. Ollama) as a v2 option for stricter compliance posture |
 | R-6 | Knowledge base corpus too small to achieve BO-3 match rate | High (at launch) | Low — BO-3 metric unmeasurable until corpus grows | Conduct a retroactive incident import sprint before formally measuring BO-3; enforce the 20-incident evaluation gate |
+| R-7 | Security toggle left disabled (`SECURITY_ENABLED=false`) in production | Low | High — all endpoints unauthenticated; admin ingestion endpoint exposed | Enforce `SECURITY_ENABLED=true` via IaC and deployment runbooks; the service logs a WARN at startup whenever security is disabled |

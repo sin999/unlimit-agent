@@ -1,8 +1,8 @@
 # Software Requirements Specification
 ## AI Incident Assistant
 
-**Version:** 1.2  
-**Date:** 2026-05-22  
+**Version:** 1.3  
+**Date:** 2026-05-23  
 **Status:** Approved  
 **References:** BRD.md
 
@@ -167,6 +167,20 @@ All validation errors MUST be collected and reported together in a single error 
 | FR-7.2 | The API key MUST be supplied via an environment variable; it MUST NOT appear in source code |
 | FR-7.3 | The model name MUST be configurable, with a default value |
 
+### FR-9 — Authentication and Authorisation
+
+| ID | Requirement |
+|---|---|
+| FR-9.1 | Security enforcement MUST be toggled by the `SECURITY_ENABLED` env var (`true`/`false`; default `false`). It maps to the `security.enabled` Spring property. |
+| FR-9.2 | When enabled, `POST /api/v1/incidents/analyze` MUST require a valid Bearer JWT containing `user` OR `admin` in the `roles` claim. |
+| FR-9.3 | When enabled, `POST /api/v1/admin/incidents/knowledge` MUST require a valid Bearer JWT containing `admin` in the `roles` claim. A caller presenting only the `user` role MUST be rejected with HTTP 403. |
+| FR-9.4 | `GET /actuator/health` MUST always be accessible without authentication, regardless of the toggle state. |
+| FR-9.5 | A request with a missing or invalid JWT when security is enabled MUST return HTTP 401 with the standard error body (`"error"`: `"Unauthorized"`). |
+| FR-9.6 | A request with a valid JWT but insufficient role MUST return HTTP 403 with the standard error body (`"error"`: `"Forbidden"`). |
+| FR-9.7 | Roles MUST be extracted from the `roles` claim (array of strings) in the JWT. The claim name MUST be configurable. |
+| FR-9.8 | JWT signature verification MUST use a JWKS endpoint or issuer URI supplied via environment variables. No signing keys MUST be hardcoded in source or configuration files. |
+| FR-9.9 | When security is disabled, all endpoints are accessible without authentication (existing behaviour is preserved). |
+
 ### FR-8 — Health Check
 
 | ID | Requirement |
@@ -204,8 +218,12 @@ All validation errors MUST be collected and reported together in a single error 
 |---|---|
 | NFR-3.1 | The LLM API key MUST NOT appear in source code, build artefacts, or logs at any level |
 | NFR-3.2 | Raw incident descriptions MUST NOT be written to persistent log storage at INFO level or above. Writing raw descriptions to DEBUG-level logs is permitted only when DEBUG logging is explicitly enabled; DEBUG logging MUST be disabled by default in the production configuration profile. |
+| NFR-3.3 | The security toggle MUST default to disabled. Enabling it MUST require the explicit env var `SECURITY_ENABLED=true`; it MUST NOT be pre-enabled in the default `application.properties` shipped with the service. |
+| NFR-3.4 | If `SECURITY_ENABLED=true` but neither `JWT_ISSUER_URI` nor `JWT_JWK_SET_URI` is configured, the service MUST fail to start with a descriptive error (fail-fast). |
+| NFR-3.5 | When `SECURITY_ENABLED=false`, the service MUST emit a WARN-level log message at startup indicating that security enforcement is disabled. |
 
 ### NFR-4 — Maintainability
+
 
 | ID | Requirement |
 |---|---|
@@ -355,6 +373,8 @@ Content-Type: application/json
 | Request body exceeds 16 KB | 400 | `"Validation failed"` |
 | Unsupported Content-Type | 415 | `"Unsupported media type"` |
 | Unsupported HTTP method | 405 | `"Method not allowed"` |
+| Missing or invalid JWT (security enabled) | 401 | `"Unauthorized"` |
+| Valid JWT, insufficient role (security enabled) | 403 | `"Forbidden"` |
 | Pipeline stage failure | 502 | `"Agent pipeline error"` |
 | LLM output unparseable after all retries | 502 | `"LLM response parse error"` |
 | Upstream LLM API returned an error | 502 | `"Upstream LLM API error"` |
@@ -701,3 +721,18 @@ Integration test — full application context loads.
 | # | Scenario | Expected |
 |---|---|---|
 | X-1 | Context loads with dummy credentials | Application context starts without errors; vector store dependency is satisfied by a mock/stub |
+
+### 10.8 Security
+
+Slice tests. Load `SecurityConfig` explicitly. Vary the `security.enabled` property and JWT content per test. All collaborators (pipeline, knowledge base) are mocked.
+
+| # | Scenario | Setup | Expected HTTP |
+|---|---|---|---|
+| SEC-1 | Security disabled — analyze accessible without token | `security.enabled=false` (default) | 200 |
+| SEC-2 | Security enabled — USER token on analyze | `security.enabled=true`; JWT `roles:["user"]`, POST `/api/v1/incidents/analyze` | 200 |
+| SEC-3 | Security enabled — ADMIN token on analyze | `security.enabled=true`; JWT `roles:["admin"]`, POST `/api/v1/incidents/analyze` | 200 |
+| SEC-4 | Security enabled — no token on analyze | `security.enabled=true`; no `Authorization` header | 401; `"error"` = `"Unauthorized"` |
+| SEC-5 | Security enabled — USER token denied on ingest | `security.enabled=true`; JWT `roles:["user"]`, POST `/api/v1/admin/incidents/knowledge` | 403; `"error"` = `"Forbidden"` |
+| SEC-6 | Security enabled — ADMIN token on ingest | `security.enabled=true`; JWT `roles:["admin"]`, POST `/api/v1/admin/incidents/knowledge` | 201 |
+| SEC-7 | Security enabled — no token on ingest | `security.enabled=true`; no `Authorization` header | 401; `"error"` = `"Unauthorized"` |
+| SEC-8 | Health endpoint always accessible | `security.enabled=true`; no token; GET `/actuator/health` | 200 |

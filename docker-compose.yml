@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   chroma:
     image: chromadb/chroma:0.5.23
@@ -24,6 +22,49 @@ services:
       chroma:
         condition: service_healthy
 
+  llama-cpp-init:
+    image: alpine/curl:8.11.1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /models/nomic-embed-text.gguf ]; then
+          echo 'Model already present, skipping download'
+        else
+          echo 'Downloading nomic-embed-text (~139 MB)...'
+          curl -fL -o /models/nomic-embed-text.gguf.tmp \
+            https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf \
+            && mv /models/nomic-embed-text.gguf.tmp /models/nomic-embed-text.gguf \
+            && echo 'Model ready'
+        fi
+    volumes:
+      - llama-cpp-models:/models
+
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-b9294
+    command:
+      - "--model"
+      - "/models/nomic-embed-text.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--embedding"
+      - "--pooling"
+      - "mean"
+    ports:
+      - "11434:8080"
+    volumes:
+      - llama-cpp-models:/models
+    depends_on:
+      llama-cpp-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   app:
     build: .
     ports:
@@ -33,17 +74,26 @@ services:
       LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-6}
       SPRING_AI_VECTORSTORE_CHROMA_CLIENT_HOST: http://chroma
       SPRING_AI_VECTORSTORE_CHROMA_CLIENT_PORT: 8000
+      LLAMA_CPP_BASE_URL: http://llama-cpp:8080
+      LLAMA_CPP_API_KEY: none
+      SECURITY_ENABLED: ${SECURITY_ENABLED:-false}
+      JWT_ISSUER_URI: ${JWT_ISSUER_URI:-}
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI:-}
     depends_on:
       chroma:
         condition: service_healthy
       chroma-init:
         condition: service_completed_successfully
+      llama-cpp:
+        condition: service_healthy
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 60s
 
 volumes:
   chroma-data:
+  llama-cpp-models:

@@ -1,0 +1,180 @@
+openapi: 3.0.1
+info:
+  title: Unlimit Agent API
+  description: AI Incident Assistant — analyses incidents and suggests hypotheses using an LLM pipeline
+  version: 0.0.2
+
+servers:
+  - url: http://localhost:8080
+    description: Local / Docker Compose
+
+tags:
+  - name: Incidents
+    description: AI-powered incident triage and analysis
+  - name: Knowledge Base (Admin)
+    description: Manage past incidents stored in the vector knowledge base
+
+paths:
+  /api/v1/incidents/analyze:
+    post:
+      tags:
+        - Incidents
+      summary: Analyse an incident
+      description: >
+        Runs the three-stage LLM pipeline (extract → enrich → synthesise) and returns
+        a structured triage analysis.
+      operationId: analyze
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentRequest'
+            example:
+              description: "Card payments are failing with timeout errors since 14:00 UTC."
+      responses:
+        '200':
+          description: Analysis produced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentAnalysis'
+        '400':
+          description: Validation error — description is blank or exceeds 2000 characters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream LLM or pipeline error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/incidents/knowledge:
+    post:
+      tags:
+        - Knowledge Base (Admin)
+      summary: Ingest a past incident
+      description: >
+        Adds or updates a past incident in the ChromaDB vector store.
+        Idempotent — re-posting the same incidentId overwrites the existing entry.
+      operationId: ingest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeIngestRequest'
+            example:
+              incidentId: "INC-105"
+              text: "Payment timeouts caused by misconfigured PayGate circuit-breaker. Fixed by increasing timeout threshold."
+      responses:
+        '201':
+          description: Incident ingested successfully
+        '400':
+          description: Validation error — incidentId or text is blank
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    IncidentRequest:
+      type: object
+      description: Incident triage request
+      required:
+        - description
+      properties:
+        description:
+          type: string
+          description: Free-text description of the incident
+          minLength: 1
+          maxLength: 2000
+          example: "Card payments are failing with timeout errors since 14:00 UTC."
+
+    IncidentAnalysis:
+      type: object
+      description: Structured triage analysis produced by the LLM pipeline
+      properties:
+        category:
+          type: string
+          description: Incident category
+          example: "External payment provider issue"
+        summary:
+          type: string
+          description: Short summary of the incident
+          example: "PayGate is not responding to payment requests."
+        severity:
+          $ref: '#/components/schemas/Severity'
+        hypotheses:
+          type: array
+          description: Ranked list of diagnostic hypotheses with suggested next steps
+          items:
+            $ref: '#/components/schemas/Hypothesis'
+
+    Hypothesis:
+      type: object
+      description: A single diagnostic hypothesis with supporting reasoning and recommended actions
+      properties:
+        title:
+          type: string
+          description: Short title of the hypothesis
+          example: "PayGate degradation"
+        reasoning:
+          type: string
+          description: Reasoning behind this hypothesis
+          example: "Timeouts correlate with calls to the PayGate API endpoint."
+        next_steps:
+          type: array
+          description: Concrete next steps to investigate or resolve
+          items:
+            type: string
+          example:
+            - "Check PayGate status page"
+            - "Review payment-service error logs"
+
+    Severity:
+      type: string
+      description: Assessed severity level
+      enum:
+        - low
+        - medium
+        - high
+
+    KnowledgeIngestRequest:
+      type: object
+      description: Request to add or update a past incident in the knowledge base
+      required:
+        - incidentId
+        - text
+      properties:
+        incidentId:
+          type: string
+          description: Unique incident identifier
+          minLength: 1
+          example: "INC-105"
+        text:
+          type: string
+          description: Full incident description including symptoms, root cause, and resolution
+          minLength: 1
+          example: "Payment timeouts caused by misconfigured PayGate circuit-breaker. Fixed by increasing timeout threshold."
+
+    ErrorResponse:
+      type: object
+      description: Error response returned on 4xx and 5xx status codes
+      properties:
+        error:
+          type: string
+          description: Short error category
+          example: "Validation failed"
+        detail:
+          type: string
+          description: Detailed error message
+          example: "description: must not be blank"
+        status:
+          type: integer
+          description: HTTP status code
+          example: 400
